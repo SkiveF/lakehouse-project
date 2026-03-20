@@ -35,3 +35,8 @@ stubs/
 # Work dir
 work-dir/
 
+# Generated data
+data/sources_files/*.csv
+data/generate_data.py
+data/count.py
+

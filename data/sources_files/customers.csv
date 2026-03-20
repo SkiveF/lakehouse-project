@@ -1,5 +1,0 @@
-customer_id,name,email,city,updated_at
-101,John Doe,john@mail.com,Paris,2026-01-01 09:00:00
-101,John Doe,John@mail.com,Paris,2026-01-01 10:00:00
-102,Jane Smith,jane@mail.com,Lyon,2026-01-01 11:00:00
-103,Bob Lee,bob@mail.com,Marseille,2026-01-01 12:00:00
