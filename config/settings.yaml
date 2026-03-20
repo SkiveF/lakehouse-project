@@ -1,0 +1,24 @@
+bronze:
+  sources:
+    customers:
+      path: /opt/project/data/sources_files/customers.csv
+
+    orders:
+      path: /opt/project/data/sources_files/orders.csv
+
+silver:
+  sources:
+    customers:
+      path: s3a://bronze/customers/
+      primary_key: customer_id
+      order_by: updated_at
+      transformations:
+        - lowercase_email
+
+    orders:
+      path: s3a://bronze/orders/
+      primary_key: order_id
+      order_by: updated_at
+
+gold:
+   enabled: true
