@@ -129,7 +129,8 @@ services:
           --conf spark.hadoop.fs.s3a.secret.key=password123 \
           --conf spark.hadoop.fs.s3a.path.style.access=true \
           --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-          --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false
+          --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
+          --conf spark.sql.legacy.allowNonEmptyLocationInCTAS=true
         echo "✅ Spark Thrift Server démarré (metastore → PostgreSQL)"
         tail -f /opt/spark/logs/*
     ports:
@@ -137,6 +138,7 @@ services:
     volumes:
       - ../:/opt/project
       - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
 
   # ── dbt ── Silver + Gold via dbt run
   dbt:
@@ -158,5 +160,22 @@ services:
         echo "✅ dbt prêt — container actif."
         tail -f /dev/null
 
+  # ── Apache Zeppelin ── notebook SQL interactif
+  zeppelin:
+    image: apache/zeppelin:0.11.1
+    container_name: zeppelin
+    depends_on:
+      - spark-thrift
+    ports:
+      - "8085:8080"
+    environment:
+      - ZEPPELIN_ADDR=0.0.0.0
+      - ZEPPELIN_PORT=8080
+    volumes:
+      - zeppelin_notebooks:/zeppelin/notebook
+      - zeppelin_logs:/zeppelin/logs
+
 volumes:
   minio_data:
+  zeppelin_notebooks:
+  zeppelin_logs:

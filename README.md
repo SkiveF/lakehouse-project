@@ -1,24 +1,25 @@
 # 🏠 Lakehouse Pipeline
 
-Pipeline de données **Medallion Architecture** (Bronze → Silver → Gold) utilisant **Apache Spark**, **MinIO** (stockage S3) et **Apache Airflow** (orchestration), le tout containerisé avec **Docker Compose**.
+Pipeline de données **Medallion Architecture** (Bronze → Silver → Gold) utilisant **Apache Spark**, **MinIO** (stockage S3), **dbt** (transformations SQL), **Apache Airflow** (orchestration) et **Apache Zeppelin** (exploration SQL), le tout containerisé avec **Docker Compose**.
 
 ---
 
 ## 📐 Architecture
 
 ```
-CSV Sources ──► Bronze (raw) ──► Silver (clean) ──► Gold (aggregated)
-                  │                   │                   │
-                  └───────── MinIO (S3-compatible) ───────┘
-                                      │
-                              Airflow (orchestration)
+CSV Sources ──► Bronze (raw) ──► Silver (dbt clean) ──► Gold (dbt aggregated)
+                  │                     │                        │
+                  └──────────── MinIO (S3-compatible) ───────────┘
+                                        │
+                         ┌──────────────┴──────────────┐
+                    Airflow (orchestration)     Zeppelin / Superset (SQL)
 ```
 
 | Couche | Description | Stockage |
 |--------|-------------|----------|
 | **Bronze** | Données brutes ingérées telles quelles depuis les CSV | `s3a://bronze/` |
-| **Silver** | Données nettoyées, dédupliquées, transformées | `s3a://silver/` |
-| **Gold** | Agrégations métier prêtes pour l'analyse | `s3a://gold/` |
+| **Silver** | Données nettoyées, dédupliquées, transformées (dbt) | `s3a://silver/` |
+| **Gold** | Agrégations métier prêtes pour l'analyse (dbt) | `s3a://gold/` |
 
 ---
 
@@ -29,6 +30,9 @@ CSV Sources ──► Bronze (raw) ──► Silver (clean) ──► Gold (aggr
 | Apache Spark | 3.5.0 | Traitement distribué des données |
 | MinIO | latest | Stockage objet S3-compatible |
 | Apache Airflow | 2.9.1 | Orchestration du pipeline |
+| dbt (dbt-spark) | 1.x | Transformations Silver & Gold en SQL |
+| Spark Thrift Server | 3.5.0 | Exposition HiveServer2 (JDBC/ODBC) |
+| Apache Zeppelin | 0.11.1 | Notebooks SQL interactifs |
 | Docker Compose | - | Containerisation de l'infrastructure |
 | Python | 3.12+ | Langage du pipeline |
 
@@ -50,8 +54,15 @@ lakehouse-project/
 ├── transformations/
 │   ├── bronze_to_silver.py          # Nettoyage, déduplication
 │   └── silver_to_gold.py            # Agrégations métier
+├── lakehouse_dbt/
+│   ├── dbt_project.yml              # Configuration dbt
+│   ├── profiles.yml                 # Connexion Spark Thrift Server
+│   └── models/
+│       ├── sources/sources.yml      # Déclaration des sources bronze
+│       ├── silver/                  # Modèles Silver (stg_customers, stg_orders)
+│       └── gold/                    # Modèles Gold (daily_revenue, top_customers, customer_orders_summary)
 ├── dags/
-│   └── lakehouse_pipeline.py        # DAG Airflow (bronze → silver → gold)
+│   └── lakehouse_pipeline.py        # DAG Airflow (bronze → dbt silver → dbt gold)
 ├── data/
 │   ├── sources_files/               # Fichiers CSV sources
 │   └── generate_data.py             # Script de génération de données
@@ -77,24 +88,23 @@ docker compose up -d
 python data/generate_data.py
 ```
 
-### 3. Lancer le pipeline complet
+### 3. Ingestion Bronze (Spark)
 
 ```bash
-docker exec -it spark /opt/spark/bin/spark-submit /opt/project/main.py
+docker exec spark /opt/spark/bin/spark-submit /opt/project/main.py --layer bronze
 ```
 
-### 4. Lancer une couche spécifique
+### 4. Transformations Silver & Gold (dbt)
 
 ```bash
-# Bronze uniquement
-docker exec -it spark /opt/spark/bin/spark-submit /opt/project/main.py --layer bronze
-
-# Silver uniquement
-docker exec -it spark /opt/spark/bin/spark-submit /opt/project/main.py --layer silver
-
-# Gold uniquement
-docker exec -it spark /opt/spark/bin/spark-submit /opt/project/main.py --layer gold
+docker exec dbt dbt run \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
 ```
+
+### 5. Pipeline complet via Airflow
+
+Accède à [http://localhost:8081](http://localhost:8081) → active et déclenche le DAG `lakehouse_pipeline`.
 
 ---
 
@@ -102,16 +112,50 @@ docker exec -it spark /opt/spark/bin/spark-submit /opt/project/main.py --layer g
 
 | Service | URL | Identifiants |
 |---------|-----|--------------|
+| **Spark Master** | [http://localhost:8080](http://localhost:8080) | — |
 | **Airflow** | [http://localhost:8081](http://localhost:8081) | `admin` / `admin` |
 | **MinIO Console** | [http://localhost:9001](http://localhost:9001) | `admin` / `password123` |
-| **Spark Master** | [http://localhost:8080](http://localhost:8080) | — |
+| **Zeppelin** | [http://localhost:8085](http://localhost:8085) | — |
+
+---
+
+## 🔍 Exploration SQL avec Zeppelin
+
+Zeppelin se connecte au **Spark Thrift Server** via JDBC.
+
+### Configuration de l'interpréteur JDBC (une seule fois)
+
+1. Menu **Interpreter** → recherche `jdbc` → **Edit**
+2. Renseigner :
+
+| Propriété | Valeur |
+|-----------|--------|
+| `default.url` | `jdbc:hive2://spark-thrift:10000` |
+| `default.driver` | `org.apache.hive.jdbc.HiveDriver` |
+| `default.user` | `root` |
+
+3. **Dependencies** → ajouter : `org.apache.hive:hive-jdbc:2.3.9`
+4. **Save** → **Restart**
+
+### Exemple de notebook
+
+```sql
+%jdbc
+USE gold;
+SELECT * FROM daily_revenue ORDER BY order_date DESC LIMIT 10;
+```
+
+```sql
+%jdbc
+USE gold;
+SELECT * FROM top_customers;
+```
 
 ---
 
 ## 📊 Tables Gold
 
 ### `customer_orders_summary`
-Vue client enrichie avec métriques de commandes.
 
 | Colonne | Description |
 |---------|-------------|
@@ -122,7 +166,6 @@ Vue client enrichie avec métriques de commandes.
 | `last_order_date` | Date de la dernière commande |
 
 ### `daily_revenue`
-Chiffre d'affaires journalier.
 
 | Colonne | Description |
 |---------|-------------|
@@ -131,7 +174,6 @@ Chiffre d'affaires journalier.
 | `total_orders` | Nombre de commandes du jour |
 
 ### `top_customers`
-Classement des meilleurs clients par montant dépensé.
 
 | Colonne | Description |
 |---------|-------------|
@@ -141,10 +183,10 @@ Classement des meilleurs clients par montant dépensé.
 
 ---
 
-## 🔄 Transformations Silver
+## 🔄 Transformations Silver (dbt)
 
-- **`lowercase_email`** — Normalisation des emails en minuscules
-- **Déduplication** — Par `primary_key` avec tri sur `updated_at` (dernière version conservée)
+- **`stg_customers`** — Normalisation email (lowercase), déduplication par `customer_id`
+- **`stg_orders`** — Filtrage des statuts invalides, déduplication par `order_id`
 
 ---
 

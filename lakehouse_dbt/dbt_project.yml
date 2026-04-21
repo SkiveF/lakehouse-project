@@ -32,10 +32,12 @@ clean-targets:         # directories to be removed by `dbt clean`
 models:
   lakehouse_dbt:
     silver:
-      +materialized: table      # Silver = tables physiques dans s3a://silver/ (traces gardées)
+      +materialized: table
+      +schema: silver
       +file_format: parquet
       +location_root: "s3a://silver"
     gold:
       +materialized: table
+      +schema: gold
       +file_format: parquet
       +location_root: "s3a://gold"
