@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Données brutes ingérées depuis les CSV (couche Bronze / MinIO)"
+    tables:
+      - name: customers
+        description: "Table clients brute — chemin s3a://bronze/customers/"
+      - name: orders
+        description: "Table commandes brute — chemin s3a://bronze/orders/"
+

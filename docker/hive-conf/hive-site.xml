@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+  <!-- ── PostgreSQL comme Hive Metastore (persistant, partagé entre spark et spark-thrift) ── -->
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:postgresql://host.docker.internal:5432/hive_metastore</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>org.postgresql.Driver</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>postgres</value>
+    <!-- ⚠️ Remplace par ton user PostgreSQL si différent -->
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>biblioapp</value>
+    <!-- ⚠️ Remplace par ton mot de passe PostgreSQL -->
+  </property>
+
+  <!-- Crée automatiquement le schéma Hive si absent -->
+  <property>
+    <name>datanucleus.autoCreateSchema</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>datanucleus.fixedDatastore</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>datanucleus.autoCreateTables</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>false</value>
+  </property>
+
+  <!-- Warehouse par défaut (remplacé par les LOCATION s3a:// dans dbt) -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>s3a://warehouse/</value>
+  </property>
+
+</configuration>
+

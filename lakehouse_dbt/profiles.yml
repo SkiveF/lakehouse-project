@@ -1,0 +1,21 @@
+lakehouse_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: spark
+      method: thrift
+      host: spark-thrift
+      port: 10000
+      user: root
+      schema: default
+      threads: 2
+      connect_timeout: 60
+      connect_retries: 5
+
+    local:
+      type: spark
+      method: session
+      host: localhost
+      schema: default
+      threads: 2
+

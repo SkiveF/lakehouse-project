@@ -7,8 +7,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: password123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -22,7 +22,6 @@ services:
       - -c
       - |
         pip install pyyaml 2>/dev/null || pip3 install pyyaml 2>/dev/null
-        # Download Hadoop AWS JARs if not already present
         JAR_DIR=/opt/spark/jars
         if [ ! -f $$JAR_DIR/hadoop-aws-3.3.4.jar ]; then
           echo "Downloading Hadoop AWS JARs..."
@@ -31,12 +30,18 @@ services:
           curl -sL -o $$JAR_DIR/aws-java-sdk-bundle-1.12.262.jar \
             https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
         fi
+        if [ ! -f $$JAR_DIR/postgresql.jar ]; then
+          echo "Downloading PostgreSQL JDBC driver..."
+          curl -sL -o $$JAR_DIR/postgresql.jar \
+            https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
+        fi
         exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "8080:8080"
       - "7077:7077"
     volumes:
       - ../:/opt/project
+      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
 
   spark-worker:
     image: apache/spark:3.5.0
@@ -51,16 +56,21 @@ services:
         pip install pyyaml 2>/dev/null || pip3 install pyyaml 2>/dev/null
         JAR_DIR=/opt/spark/jars
         if [ ! -f $$JAR_DIR/hadoop-aws-3.3.4.jar ]; then
-          echo "Downloading Hadoop AWS JARs..."
           curl -sL -o $$JAR_DIR/hadoop-aws-3.3.4.jar \
             https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
           curl -sL -o $$JAR_DIR/aws-java-sdk-bundle-1.12.262.jar \
             https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
         fi
+        if [ ! -f $$JAR_DIR/postgresql.jar ]; then
+          curl -sL -o $$JAR_DIR/postgresql.jar \
+            https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
+        fi
         exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark:7077
     volumes:
       - ../:/opt/project
+      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
 
+  # ── Airflow ── orchestrateur du pipeline Bronze → dbt
   airflow:
     image: apache/airflow:2.9.1
     container_name: airflow
@@ -79,12 +89,93 @@ services:
         pip install docker 2>/dev/null
         airflow db migrate
         airflow users create --username admin --firstname Admin --lastname User \
-          --role Admin --email admin@example.com --password admin 2>/dev/null || true
+          --role Admin --email admin@example.com --password ${AIRFLOW_ADMIN_PASSWORD} 2>/dev/null || true
         airflow scheduler &
         exec airflow webserver --port 8080
     volumes:
       - ../dags:/opt/airflow/dags
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # ── Spark Thrift Server ── expose HiveServer2 pour dbt-spark (thrift)
+  # Metastore → PostgreSQL (persistant, partagé, pas de perte au restart)
+  spark-thrift:
+    image: apache/spark:3.5.0
+    container_name: spark-thrift
+    user: root
+    depends_on:
+      - spark
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        JAR_DIR=/opt/spark/jars
+        if [ ! -f $$JAR_DIR/hadoop-aws-3.3.4.jar ]; then
+          curl -sL -o $$JAR_DIR/hadoop-aws-3.3.4.jar \
+            https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
+          curl -sL -o $$JAR_DIR/aws-java-sdk-bundle-1.12.262.jar \
+            https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+        fi
+        if [ ! -f $$JAR_DIR/postgresql.jar ]; then
+          echo "Downloading PostgreSQL JDBC driver..."
+          curl -sL -o $$JAR_DIR/postgresql.jar \
+            https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
+        fi
+        /opt/spark/sbin/start-thriftserver.sh \
+          --master spark://spark:7077 \
+          --hiveconf hive.server2.thrift.port=10000 \
+          --hiveconf hive.server2.thrift.bind.host=0.0.0.0 \
+          --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
+          --conf spark.hadoop.fs.s3a.access.key=${SPARK_S3A_ACCESS_KEY} \
+          --conf spark.hadoop.fs.s3a.secret.key=${SPARK_S3A_SECRET_KEY} \
+          --conf spark.hadoop.fs.s3a.path.style.access=true \
+          --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+          --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
+          --conf spark.sql.legacy.allowNonEmptyLocationInCTAS=true
+        echo "✅ Spark Thrift Server démarré (metastore → PostgreSQL)"
+        tail -f /opt/spark/logs/*
+    ports:
+      - "10000:10000"
+    volumes:
+      - ../:/opt/project
+      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+
+  # ── dbt ── Silver + Gold via dbt run
+  dbt:
+    image: python:3.11-slim
+    container_name: dbt
+    depends_on:
+      - spark-thrift
+    working_dir: /opt/project/lakehouse_dbt
+    environment:
+      - DBT_PROFILES_DIR=/opt/project/lakehouse_dbt
+    volumes:
+      - ../:/opt/project
+    restart: unless-stopped
+    command:
+      - bash
+      - -c
+      - |
+        pip install --quiet dbt-core "dbt-spark[PyHive]"
+        echo "✅ dbt prêt — container actif."
+        tail -f /dev/null
+
+  # ── Apache Zeppelin ── notebook SQL interactif
+  zeppelin:
+    image: apache/zeppelin:0.11.1
+    container_name: zeppelin
+    depends_on:
+      - spark-thrift
+    ports:
+      - "8085:8080"
+    environment:
+      - ZEPPELIN_ADDR=0.0.0.0
+      - ZEPPELIN_PORT=8080
+    volumes:
+      - zeppelin_notebooks:/zeppelin/notebook
+      - zeppelin_logs:/zeppelin/logs
+
 volumes:
   minio_data:
+  zeppelin_notebooks:
+  zeppelin_logs:

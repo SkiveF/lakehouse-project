@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: "Clients dédupliqués depuis Bronze — email en lowercase"
+    columns:
+      - name: customer_id
+        description: "Clé primaire"
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - not_null
+
+  - name: stg_orders
+    description: "Commandes dédupliquées depuis Bronze"
+    columns:
+      - name: order_id
+        description: "Clé primaire"
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+      - name: status
+        description: "Statut de la commande"
+

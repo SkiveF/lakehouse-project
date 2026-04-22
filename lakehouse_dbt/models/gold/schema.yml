@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: customer_orders_summary
+    description: "Vue enrichie clients + agrégats commandes expédiées"
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: total_orders
+        tests: [not_null]
+      - name: total_amount
+        tests: [not_null]
+
+  - name: daily_revenue
+    description: "Revenu journalier agrégé depuis les commandes expédiées"
+    columns:
+      - name: order_date
+        tests: [unique, not_null]
+
+  - name: top_customers
+    description: "Top 10 clients par montant dépensé"
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+
