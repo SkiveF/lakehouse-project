@@ -89,7 +89,7 @@ services:
         pip install docker 2>/dev/null
         airflow db migrate
         airflow users create --username admin --firstname Admin --lastname User \
-          --role Admin --email admin@example.com --password admin 2>/dev/null || true
+          --role Admin --email admin@example.com --password ${AIRFLOW_ADMIN_PASSWORD} 2>/dev/null || true
         airflow scheduler &
         exec airflow webserver --port 8080
     volumes:

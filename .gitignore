@@ -21,6 +21,10 @@ derby.log
 # Docker volumes
 minio_data/
 
+# Secrets
+docker/.env
+.env
+
 # OS
 .DS_Store
 Thumbs.db
