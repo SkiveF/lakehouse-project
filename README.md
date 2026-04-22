@@ -113,8 +113,8 @@ Accède à [http://localhost:8081](http://localhost:8081) → active et déclenc
 | Service | URL | Identifiants |
 |---------|-----|--------------|
 | **Spark Master** | [http://localhost:8080](http://localhost:8080) | — |
-| **Airflow** | [http://localhost:8081](http://localhost:8081) | `admin` / `admin` |
-| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | `admin` / `password123` |
+| **Airflow** | [http://localhost:8081](http://localhost:8081) | `admin` / voir `docker/.env` |
+| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | voir `docker/.env` |
 | **Zeppelin** | [http://localhost:8085](http://localhost:8085) | — |
 
 ---

@@ -7,8 +7,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: password123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -125,8 +125,8 @@ services:
           --hiveconf hive.server2.thrift.port=10000 \
           --hiveconf hive.server2.thrift.bind.host=0.0.0.0 \
           --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
-          --conf spark.hadoop.fs.s3a.access.key=admin \
-          --conf spark.hadoop.fs.s3a.secret.key=password123 \
+          --conf spark.hadoop.fs.s3a.access.key=${SPARK_S3A_ACCESS_KEY} \
+          --conf spark.hadoop.fs.s3a.secret.key=${SPARK_S3A_SECRET_KEY} \
           --conf spark.hadoop.fs.s3a.path.style.access=true \
           --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
           --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
