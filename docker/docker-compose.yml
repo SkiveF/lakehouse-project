@@ -17,6 +17,9 @@ services:
     image: apache/spark:3.5.0
     container_name: spark
     user: root
+    environment:
+      SPARK_S3A_ACCESS_KEY: ${SPARK_S3A_ACCESS_KEY}
+      SPARK_S3A_SECRET_KEY: ${SPARK_S3A_SECRET_KEY}
     entrypoint: /bin/bash
     command:
       - -c

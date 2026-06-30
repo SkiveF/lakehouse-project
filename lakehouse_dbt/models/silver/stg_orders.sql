@@ -1,5 +1,5 @@
 -- silver/stg_orders.sql
--- Équivalent de bronze_to_silver.py : déduplication par order_id
+-- Deduplicate Bronze orders for the Silver layer.
 
 with source as (
     select * from {{ source('bronze', 'orders') }}

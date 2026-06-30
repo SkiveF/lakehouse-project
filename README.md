@@ -1,100 +1,93 @@
-# 🏠 Lakehouse Pipeline
+# Lakehouse Pipeline
 
-Pipeline de données **Medallion Architecture** (Bronze → Silver → Gold) utilisant **Apache Spark**, **MinIO** (stockage S3), **dbt** (transformations SQL), **Apache Airflow** (orchestration) et **Apache Zeppelin** (exploration SQL), le tout containerisé avec **Docker Compose**.
+Pipeline de donnees en architecture Medallion (Bronze -> Silver -> Gold) avec
+Apache Spark, MinIO, dbt, Apache Airflow et Apache Zeppelin, le tout lance via
+Docker Compose.
 
----
+## Architecture
 
-## 📐 Architecture
-
-```
-CSV Sources ──► Bronze (raw) ──► Silver (dbt clean) ──► Gold (dbt aggregated)
-                  │                     │                        │
-                  └──────────── MinIO (S3-compatible) ───────────┘
-                                        │
-                         ┌──────────────┴──────────────┐
-                    Airflow (orchestration)     Zeppelin / Superset (SQL)
+```text
+CSV sources -> Bronze raw -> Silver dbt clean -> Gold dbt aggregates
+                   |              |                 |
+                   +--------------+-----------------+
+                                  |
+                              MinIO S3
+                                  |
+                         Airflow orchestration
+                                  |
+                  Zeppelin / Spark Thrift for SQL access
 ```
 
 | Couche | Description | Stockage |
 |--------|-------------|----------|
-| **Bronze** | Données brutes ingérées telles quelles depuis les CSV | `s3a://bronze/` |
-| **Silver** | Données nettoyées, dédupliquées, transformées (dbt) | `s3a://silver/` |
-| **Gold** | Agrégations métier prêtes pour l'analyse (dbt) | `s3a://gold/` |
+| Bronze | Donnees brutes ingerees depuis les CSV avec Spark | `s3a://bronze/` |
+| Silver | Donnees nettoyees et dedupliquees avec dbt | `s3a://silver/` |
+| Gold | Agregations metier construites avec dbt | `s3a://gold/` |
 
----
+## Stack
 
-## 🛠️ Stack Technique
+| Outil | Role |
+|-------|------|
+| Apache Spark 3.5.0 | Ingestion Bronze et execution SQL |
+| MinIO | Stockage objet compatible S3 |
+| Apache Airflow 2.9.1 | Orchestration du pipeline |
+| dbt / dbt-spark | Transformations SQL Silver et Gold |
+| Spark Thrift Server | Acces HiveServer2 pour dbt et Zeppelin |
+| Apache Zeppelin | Exploration SQL |
+| Docker Compose | Infrastructure locale |
 
-| Outil | Version | Rôle |
-|-------|---------|------|
-| Apache Spark | 3.5.0 | Traitement distribué des données |
-| MinIO | latest | Stockage objet S3-compatible |
-| Apache Airflow | 2.9.1 | Orchestration du pipeline |
-| dbt (dbt-spark) | 1.x | Transformations Silver & Gold en SQL |
-| Spark Thrift Server | 3.5.0 | Exposition HiveServer2 (JDBC/ODBC) |
-| Apache Zeppelin | 0.11.1 | Notebooks SQL interactifs |
-| Docker Compose | - | Containerisation de l'infrastructure |
-| Python | 3.12+ | Langage du pipeline |
+## Structure
 
----
-
-## 📁 Structure du Projet
-
-```
+```text
 lakehouse-project/
-├── main.py                          # Point d'entrée du pipeline
-├── config/
-│   └── settings.yaml                # Configuration des sources et chemins
-├── spark/
-│   ├── config.py                    # Chargement YAML
-│   ├── io.py                        # Lecture bronze/silver (Parquet)
-│   └── utils.py                     # Création SparkSession + config S3A
-├── ingestion/
-│   └── base_ingestion.py            # Lecture CSV → écriture bronze
-├── transformations/
-│   ├── bronze_to_silver.py          # Nettoyage, déduplication
-│   └── silver_to_gold.py            # Agrégations métier
-├── lakehouse_dbt/
-│   ├── dbt_project.yml              # Configuration dbt
-│   ├── profiles.yml                 # Connexion Spark Thrift Server
-│   └── models/
-│       ├── sources/sources.yml      # Déclaration des sources bronze
-│       ├── silver/                  # Modèles Silver (stg_customers, stg_orders)
-│       └── gold/                    # Modèles Gold (daily_revenue, top_customers, customer_orders_summary)
-├── dags/
-│   └── lakehouse_pipeline.py        # DAG Airflow (bronze → dbt silver → dbt gold)
-├── data/
-│   ├── sources_files/               # Fichiers CSV sources
-│   └── generate_data.py             # Script de génération de données
-├── docker/
-│   └── docker-compose.yml           # Infrastructure containerisée
-└── README.md
+|-- main.py                         # Point d'entree Spark pour l'ingestion Bronze
+|-- config/
+|   `-- settings.yaml               # Sources CSV de la couche Bronze
+|-- spark/
+|   |-- config.py                   # Chargement YAML
+|   |-- io.py                       # Helpers Parquet
+|   `-- utils.py                    # SparkSession + configuration S3A
+|-- ingestion/
+|   `-- base_ingestion.py           # CSV -> Bronze Parquet + table Hive
+|-- lakehouse_dbt/
+|   |-- dbt_project.yml             # Configuration dbt
+|   |-- profiles.yml                # Connexion Spark Thrift Server
+|   `-- models/
+|       |-- sources/                # Sources Bronze
+|       |-- silver/                 # Modeles Silver
+|       `-- gold/                   # Modeles Gold
+|-- dags/
+|   `-- lakehouse_pipeline.py       # DAG Airflow Bronze -> refresh -> dbt
+|-- data/
+|   `-- sources_files/              # CSV sources
+|-- docker/
+|   `-- docker-compose.yml          # Services locaux
+`-- legacy/
+    `-- transformations/            # Ancienne implementation Python/Spark Silver/Gold
 ```
 
----
+## Lancement
 
-## 🚀 Lancement
-
-### 1. Démarrer l'infrastructure
+### 1. Demarrer l'infrastructure
 
 ```bash
 cd docker
 docker compose up -d
 ```
 
-### 2. Générer les données de test
+### 2. Generer les donnees de test
 
 ```bash
 python data/generate_data.py
 ```
 
-### 3. Ingestion Bronze (Spark)
+### 3. Ingestion Bronze
 
 ```bash
 docker exec spark /opt/spark/bin/spark-submit /opt/project/main.py --layer bronze
 ```
 
-### 4. Transformations Silver & Gold (dbt)
+### 4. Transformations Silver et Gold
 
 ```bash
 docker exec dbt dbt run \
@@ -104,66 +97,137 @@ docker exec dbt dbt run \
 
 ### 5. Pipeline complet via Airflow
 
-Accède à [http://localhost:8081](http://localhost:8081) → active et déclenche le DAG `lakehouse_pipeline`.
+Ouvrir [Airflow](http://localhost:8081), activer puis declencher le DAG
+`lakehouse_pipeline`.
 
----
+## Commandes dbt utiles
 
-## 🌐 Interfaces Web
+Toutes les commandes ci-dessous s'executent depuis le container `dbt` et utilisent
+le projet `lakehouse_dbt`.
+
+### Lister les modeles, sources et tests
+
+```bash
+docker exec dbt dbt ls \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+### Executer tous les modeles Silver et Gold
+
+```bash
+docker exec dbt dbt run \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+### Executer uniquement une couche ou un modele
+
+```bash
+docker exec dbt dbt run --select silver \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+```bash
+docker exec dbt dbt run --select gold.daily_revenue \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+### Lancer les tests
+
+```bash
+docker exec dbt dbt test \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+### Construire modeles + tests en une commande
+
+```bash
+docker exec dbt dbt build \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+### Compiler le SQL sans executer les modeles
+
+```bash
+docker exec dbt dbt compile \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+### Verifier la configuration dbt
+
+```bash
+docker exec dbt dbt debug \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+Note : dans l'image actuelle, `dbt debug` peut signaler que `git` manque dans le
+container, meme si la connexion Spark Thrift est valide.
+
+### Nettoyer les artefacts dbt locaux
+
+```bash
+docker exec dbt dbt clean \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+## Interfaces
 
 | Service | URL | Identifiants |
 |---------|-----|--------------|
-| **Spark Master** | [http://localhost:8080](http://localhost:8080) | — |
-| **Airflow** | [http://localhost:8081](http://localhost:8081) | `admin` / voir `docker/.env` |
-| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | voir `docker/.env` |
-| **Zeppelin** | [http://localhost:8085](http://localhost:8085) | — |
+| Spark Master | [http://localhost:8080](http://localhost:8080) | - |
+| Airflow | [http://localhost:8081](http://localhost:8081) | `admin` / voir `docker/.env` |
+| MinIO Console | [http://localhost:9001](http://localhost:9001) | voir `docker/.env` |
+| Zeppelin | [http://localhost:8085](http://localhost:8085) | - |
 
----
+## Exploration SQL avec Zeppelin
 
-## 🔍 Exploration SQL avec Zeppelin
+Zeppelin se connecte au Spark Thrift Server via JDBC.
 
-Zeppelin se connecte au **Spark Thrift Server** via JDBC.
+Configuration JDBC :
 
-### Configuration de l'interpréteur JDBC (une seule fois)
-
-1. Menu **Interpreter** → recherche `jdbc` → **Edit**
-2. Renseigner :
-
-| Propriété | Valeur |
+| Propriete | Valeur |
 |-----------|--------|
 | `default.url` | `jdbc:hive2://spark-thrift:10000` |
 | `default.driver` | `org.apache.hive.jdbc.HiveDriver` |
 | `default.user` | `root` |
 
-3. **Dependencies** → ajouter : `org.apache.hive:hive-jdbc:2.3.9`
-4. **Save** → **Restart**
+Dependance JDBC a ajouter si necessaire :
 
-### Exemple de notebook
+```text
+org.apache.hive:hive-jdbc:2.3.9
+```
+
+Exemples :
 
 ```sql
-%jdbc
 USE gold;
 SELECT * FROM daily_revenue ORDER BY order_date DESC LIMIT 10;
 ```
 
 ```sql
-%jdbc
 USE gold;
 SELECT * FROM top_customers;
 ```
 
----
-
-## 📊 Tables Gold
+## Tables Gold
 
 ### `customer_orders_summary`
 
 | Colonne | Description |
 |---------|-------------|
 | `customer_id` | Identifiant client |
-| `email` | Email normalisé (lowercase) |
-| `total_orders` | Nombre de commandes (hors annulées) |
-| `total_amount` | Montant total dépensé |
-| `last_order_date` | Date de la dernière commande |
+| `email` | Email normalise |
+| `total_orders` | Nombre de commandes expediees |
+| `total_amount` | Montant total des commandes expediees |
+| `order_date` | Date/heure de la derniere commande expediee |
 
 ### `daily_revenue`
 
@@ -171,28 +235,33 @@ SELECT * FROM top_customers;
 |---------|-------------|
 | `order_date` | Date |
 | `total_revenue` | Revenu du jour |
-| `total_orders` | Nombre de commandes du jour |
+| `total_orders` | Nombre de commandes expediees du jour |
 
 ### `top_customers`
 
 | Colonne | Description |
 |---------|-------------|
 | `customer_id` | Identifiant client |
-| `total_amount` | Montant total dépensé |
+| `total_spent` | Montant total commande |
+| `total_orders` | Nombre total de commandes |
 | `rank` | Position dans le classement |
 
----
+## Transformations dbt
 
-## 🔄 Transformations Silver (dbt)
+Silver :
 
-- **`stg_customers`** — Normalisation email (lowercase), déduplication par `customer_id`
-- **`stg_orders`** — Filtrage des statuts invalides, déduplication par `order_id`
+- `stg_customers` : normalise les emails et deduplique par `customer_id`.
+- `stg_orders` : deduplique par `order_id`.
 
----
+Gold :
 
-## ⚙️ Configuration
+- `customer_orders_summary` : agregats client sur les commandes `shipped`.
+- `daily_revenue` : revenu journalier sur les commandes `shipped`.
+- `top_customers` : top 10 clients par montant total commande.
 
-Toute la configuration est centralisée dans `config/settings.yaml` :
+## Configuration
+
+`config/settings.yaml` configure les sources CSV ingerees dans Bronze :
 
 ```yaml
 bronze:
@@ -201,25 +270,17 @@ bronze:
       path: /opt/project/data/sources_files/customers.csv
     orders:
       path: /opt/project/data/sources_files/orders.csv
-
-silver:
-  sources:
-    customers:
-      path: s3a://bronze/customers/
-      primary_key: customer_id
-      order_by: updated_at
-      transformations:
-        - lowercase_email
-    orders:
-      path: s3a://bronze/orders/
-      primary_key: order_id
-      order_by: updated_at
 ```
 
----
+Les couches Silver et Gold sont configurees dans `lakehouse_dbt/dbt_project.yml`.
 
-## 📝 Prérequis
+## Legacy
 
-- **Docker Desktop** (avec WSL2 sous Windows)
-- **Python 3.12+** (pour la génération de données locale)
+L'ancienne implementation Python/Spark des transformations Silver et Gold est
+conservee dans `legacy/transformations/` uniquement comme reference. Elle n'est
+pas appelee par le pipeline Airflow/dbt actuel.
 
+## Prerequis
+
+- Docker Desktop avec WSL2 sous Windows
+- Python 3.12+ pour generer les donnees locales

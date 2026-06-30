@@ -1,5 +1,5 @@
 -- silver/stg_customers.sql
--- Équivalent de bronze_to_silver.py : lowercase email + déduplication par customer_id
+-- Clean and deduplicate Bronze customers for the Silver layer.
 
 with source as (
     select * from {{ source('bronze', 'customers') }}
