@@ -282,7 +282,9 @@ services:
       - bash
       - -c
       - |
-        pip install --quiet dbt-core "dbt-spark[PyHive]"
+        # Versions epinglees : un pip install sans version fait dependre
+        # la stack de la derniere release publiee au moment du build.
+        pip install --quiet dbt-core==1.11.8 "dbt-spark[PyHive]==1.10.1"
         echo "dbt ready - container active"
         tail -f /dev/null
     healthcheck:
