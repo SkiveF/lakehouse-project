@@ -1,5 +1,6 @@
 import argparse
 import logging
+from pathlib import Path
 
 from ingestion.base_ingestion import read_csv_to_dataframe, write_bronze
 from spark.config import load_config
@@ -36,7 +37,8 @@ def run_bronze(spark, config):
 if __name__ == "__main__":
     args = parse_args()
     spark = create_spark_session("lakehouse_pipeline")
-    config = load_config("/opt/project/config/settings.yaml")
+    project_root = Path(__file__).resolve().parent
+    config = load_config(str(project_root / "config" / "settings.yaml"))
     try:
         if args.layer == "bronze":
             run_bronze(spark, config)

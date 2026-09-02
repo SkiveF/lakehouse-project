@@ -62,11 +62,18 @@ lakehouse-project/
 |   `-- sources_files/              # CSV sources
 |-- docker/
 |   `-- docker-compose.yml          # Services locaux
-`-- legacy/
-    `-- transformations/            # Ancienne implementation Python/Spark Silver/Gold
 ```
 
 ## Lancement
+
+### 0. Preparer les variables d'environnement
+
+```powershell
+Set-Location "C:\SF_DEV_EXP\lakehouse-project"
+Copy-Item ".env.example" ".env"
+```
+
+Puis editer `.env` avec les credentials souhaites pour MinIO, Spark S3A et Airflow.
 
 ### 1. Demarrer l'infrastructure
 
@@ -100,6 +107,27 @@ docker exec dbt dbt run \
 Ouvrir [Airflow](http://localhost:8081), activer puis declencher le DAG
 `lakehouse_pipeline`.
 
+Le DAG execute les etapes suivantes dans cet ordre :
+
+1. `init_tables`
+2. `bronze`
+3. `refresh_bronze`
+4. `dbt_run`
+
+### 6. Pipeline complet en manuel
+
+Si vous preferez lancer tout le pipeline sans Airflow :
+
+```powershell
+Set-Location "C:\SF_DEV_EXP\lakehouse-project\docker"
+docker compose up -d
+docker exec spark /opt/spark/bin/spark-submit /opt/project/init_tables.py
+docker exec spark /opt/spark/bin/spark-submit /opt/project/main.py --layer bronze
+docker exec spark-thrift /opt/spark/bin/beeline -u "jdbc:hive2://spark-thrift:10000" --silent=true -e "REFRESH TABLE bronze.customers; REFRESH TABLE bronze.orders;"
+docker exec dbt dbt run --profiles-dir /opt/project/lakehouse_dbt --project-dir /opt/project/lakehouse_dbt
+docker exec spark /opt/spark/bin/spark-submit /opt/project/validate_tables.py
+```
+
 ## Commandes dbt utiles
 
 Toutes les commandes ci-dessous s'executent depuis le container `dbt` et utilisent
@@ -121,6 +149,13 @@ docker exec dbt dbt run \
   --project-dir /opt/project/lakehouse_dbt
 ```
 
+Par defaut, `dbt run` construit tous les modeles du projet selectionnes par `dbt_project.yml`, donc ici :
+
+- les modeles `silver`
+- les modeles `gold`
+
+Autrement dit, le bloc `dbt_run` du DAG construit bien la couche Gold, pas seulement Silver.
+
 ### Executer uniquement une couche ou un modele
 
 ```bash
@@ -131,6 +166,14 @@ docker exec dbt dbt run --select silver \
 
 ```bash
 docker exec dbt dbt run --select gold.daily_revenue \
+  --profiles-dir /opt/project/lakehouse_dbt \
+  --project-dir /opt/project/lakehouse_dbt
+```
+
+Pour ne construire que Gold :
+
+```bash
+docker exec dbt dbt run --select gold \
   --profiles-dir /opt/project/lakehouse_dbt \
   --project-dir /opt/project/lakehouse_dbt
 ```
@@ -169,6 +212,12 @@ docker exec dbt dbt debug \
 
 Note : dans l'image actuelle, `dbt debug` peut signaler que `git` manque dans le
 container, meme si la connexion Spark Thrift est valide.
+
+## Service dbt
+
+Le conteneur `dbt` peut apparaitre en etat `running` en permanence. C'est normal dans cette stack.
+
+Dans `docker/docker-compose.yml`, son processus principal installe dbt puis termine par une attente bloquante pour garder le conteneur actif. Cela permet ensuite d'executer facilement des commandes telles que `docker exec dbt dbt run`, `dbt test` ou `dbt debug` sans recreer le conteneur a chaque fois.
 
 ### Nettoyer les artefacts dbt locaux
 

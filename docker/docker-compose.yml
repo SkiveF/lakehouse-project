@@ -20,6 +20,9 @@ services:
     environment:
       SPARK_S3A_ACCESS_KEY: ${SPARK_S3A_ACCESS_KEY}
       SPARK_S3A_SECRET_KEY: ${SPARK_S3A_SECRET_KEY}
+      METASTORE_JDBC_URL: ${METASTORE_JDBC_URL}
+      METASTORE_USER: ${METASTORE_USER}
+      METASTORE_PASSWORD: ${METASTORE_PASSWORD}
     entrypoint: /bin/bash
     command:
       - -c
@@ -38,13 +41,18 @@ services:
           curl -sL -o $$JAR_DIR/postgresql.jar \
             https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
         fi
+        mkdir -p /opt/spark/conf
+        sed -e "s|@@METASTORE_JDBC_URL@@|$$METASTORE_JDBC_URL|" \
+            -e "s|@@METASTORE_USER@@|$$METASTORE_USER|" \
+            -e "s|@@METASTORE_PASSWORD@@|$$METASTORE_PASSWORD|" \
+            /opt/spark/conf/hive-site.xml.template > /opt/spark/conf/hive-site.xml
         exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "8080:8080"
       - "7077:7077"
     volumes:
       - ../:/opt/project
-      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/hive-site.xml.template:/opt/spark/conf/hive-site.xml.template:ro
 
   spark-worker:
     image: apache/spark:3.5.0
@@ -52,6 +60,10 @@ services:
     user: root
     depends_on:
       - spark
+    environment:
+      METASTORE_JDBC_URL: ${METASTORE_JDBC_URL}
+      METASTORE_USER: ${METASTORE_USER}
+      METASTORE_PASSWORD: ${METASTORE_PASSWORD}
     entrypoint: /bin/bash
     command:
       - -c
@@ -68,10 +80,15 @@ services:
           curl -sL -o $$JAR_DIR/postgresql.jar \
             https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
         fi
+        mkdir -p /opt/spark/conf
+        sed -e "s|@@METASTORE_JDBC_URL@@|$$METASTORE_JDBC_URL|" \
+            -e "s|@@METASTORE_USER@@|$$METASTORE_USER|" \
+            -e "s|@@METASTORE_PASSWORD@@|$$METASTORE_PASSWORD|" \
+            /opt/spark/conf/hive-site.xml.template > /opt/spark/conf/hive-site.xml
         exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark:7077
     volumes:
       - ../:/opt/project
-      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/hive-site.xml.template:/opt/spark/conf/hive-site.xml.template:ro
 
   # ── Airflow ── orchestrateur du pipeline Bronze → dbt
   airflow:
@@ -107,6 +124,10 @@ services:
     user: root
     depends_on:
       - spark
+    environment:
+      METASTORE_JDBC_URL: ${METASTORE_JDBC_URL}
+      METASTORE_USER: ${METASTORE_USER}
+      METASTORE_PASSWORD: ${METASTORE_PASSWORD}
     entrypoint: /bin/bash
     command:
       - -c
@@ -123,8 +144,15 @@ services:
           curl -sL -o $$JAR_DIR/postgresql.jar \
             https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
         fi
+        mkdir -p /opt/spark/conf
+        sed -e "s|@@METASTORE_JDBC_URL@@|$$METASTORE_JDBC_URL|" \
+            -e "s|@@METASTORE_USER@@|$$METASTORE_USER|" \
+            -e "s|@@METASTORE_PASSWORD@@|$$METASTORE_PASSWORD|" \
+            /opt/spark/conf/hive-site.xml.template > /opt/spark/conf/hive-site.xml
         /opt/spark/sbin/start-thriftserver.sh \
           --master spark://spark:7077 \
+          --total-executor-cores ${THRIFT_TOTAL_CORES:-4} \
+          --executor-memory ${THRIFT_EXECUTOR_MEMORY:-1g} \
           --hiveconf hive.server2.thrift.port=10000 \
           --hiveconf hive.server2.thrift.bind.host=0.0.0.0 \
           --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
@@ -133,14 +161,14 @@ services:
           --conf spark.hadoop.fs.s3a.path.style.access=true \
           --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
           --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
-          --conf spark.sql.legacy.allowNonEmptyLocationInCTAS=true
-        echo "✅ Spark Thrift Server démarré (metastore → PostgreSQL)"
-        tail -f /opt/spark/logs/*
+           --conf spark.sql.legacy.allowNonEmptyLocationInCTAS=true
+         echo "Spark Thrift Server started (metastore to PostgreSQL)"
+         tail -f /opt/spark/logs/*
     ports:
       - "10000:10000"
     volumes:
       - ../:/opt/project
-      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/hive-site.xml.template:/opt/spark/conf/hive-site.xml.template:ro
       - ./hive-conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
 
   # ── dbt ── Silver + Gold via dbt run
@@ -160,7 +188,7 @@ services:
       - -c
       - |
         pip install --quiet dbt-core "dbt-spark[PyHive]"
-        echo "✅ dbt prêt — container actif."
+        echo "dbt ready - container active"
         tail -f /dev/null
 
   # ── Apache Zeppelin ── notebook SQL interactif
@@ -178,7 +206,44 @@ services:
       - zeppelin_notebooks:/zeppelin/notebook
       - zeppelin_logs:/zeppelin/logs
 
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9094:9094"
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka_data:/apache/kafka
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8086:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+
+
 volumes:
   minio_data:
+  kafka_data:
   zeppelin_notebooks:
   zeppelin_logs:
