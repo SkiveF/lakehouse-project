@@ -1,0 +1,8 @@
+# Normalise les fins de ligne pour eviter que chaque diff soit pollue par du
+# churn CRLF <-> LF (20 fichiers etaient concernes avant ce fichier).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.parquet binary
+*.jsonl -text

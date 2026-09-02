@@ -1,5 +1,5 @@
 -- gold/top_customers.sql
--- Équivalent de silver_to_gold.py::top_customers(top_n=10)
+-- Top customers ranked by total order amount.
 
 with orders as (
     select * from {{ ref('stg_orders') }}

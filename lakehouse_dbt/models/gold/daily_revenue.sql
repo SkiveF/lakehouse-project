@@ -1,5 +1,5 @@
 -- gold/daily_revenue.sql
--- Équivalent de silver_to_gold.py::daily_revenue()
+-- Daily shipped-order revenue built from the Silver orders model.
 
 with orders as (
     select * from {{ ref('stg_orders') }}

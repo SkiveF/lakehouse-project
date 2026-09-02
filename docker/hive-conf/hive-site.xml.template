@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
 
+  <!-- Genere au demarrage des containers spark* depuis ce template :
+       les @@TOKENS@@ sont remplaces par les variables METASTORE_* de docker/.env.
+       Ne PAS mettre de credentials en dur ici (fichier versionne). -->
+
   <!-- ── PostgreSQL comme Hive Metastore (persistant, partagé entre spark et spark-thrift) ── -->
   <property>
     <name>javax.jdo.option.ConnectionURL</name>
-    <value>jdbc:postgresql://host.docker.internal:5432/hive_metastore</value>
+    <value>@@METASTORE_JDBC_URL@@</value>
   </property>
   <property>
     <name>javax.jdo.option.ConnectionDriverName</name>
@@ -12,13 +16,11 @@
   </property>
   <property>
     <name>javax.jdo.option.ConnectionUserName</name>
-    <value>postgres</value>
-    <!-- ⚠️ Remplace par ton user PostgreSQL si différent -->
+    <value>@@METASTORE_USER@@</value>
   </property>
   <property>
     <name>javax.jdo.option.ConnectionPassword</name>
-    <value>biblioapp</value>
-    <!-- ⚠️ Remplace par ton mot de passe PostgreSQL -->
+    <value>@@METASTORE_PASSWORD@@</value>
   </property>
 
   <!-- Crée automatiquement le schéma Hive si absent -->

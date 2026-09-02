@@ -1,6 +1,16 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
+import os
+
+# Get environment variables with defaults
+SPARK_THRIFT_HOST = os.getenv("DBT_SPARK_HOST", "spark-thrift")
+SPARK_THRIFT_PORT = os.getenv("DBT_SPARK_PORT", "10000")
+
+INIT_TABLES = (
+    "docker exec spark "
+    "/opt/spark/bin/spark-submit /opt/project/init_tables.py"
+)
 
 SPARK_SUBMIT = (
     "docker exec spark "
@@ -13,10 +23,19 @@ DBT_RUN = (
     "--project-dir /opt/project/lakehouse_dbt"
 )
 
+# Les tests dbt (not_null / unique sur les cles Silver et Gold) doivent tourner
+# dans le pipeline : sinon ils n'existent que sur le disque.
+DBT_TEST = (
+    "docker exec dbt dbt test "
+    "--profiles-dir /opt/project/lakehouse_dbt "
+    "--project-dir /opt/project/lakehouse_dbt"
+)
+
+# Build JDBC connection string from environment variables
 REFRESH_BRONZE = (
-    "docker exec spark-thrift /opt/spark/bin/beeline "
-    "-u 'jdbc:hive2://localhost:10000' --silent=true "
-    "-e \"REFRESH TABLE bronze.customers; REFRESH TABLE bronze.orders;\""
+    f"docker exec spark-thrift /opt/spark/bin/beeline "
+    f"-u 'jdbc:hive2://{SPARK_THRIFT_HOST}:{SPARK_THRIFT_PORT}' --silent=true "
+    f"-e \"REFRESH TABLE bronze.customers; REFRESH TABLE bronze.orders;\""
 )
 
 default_args = {
@@ -33,6 +52,11 @@ with DAG(
     tags=["lakehouse", "spark", "dbt", "minio"],
 ) as dag:
 
+    init = BashOperator(
+        task_id="init_tables",
+        bash_command=INIT_TABLES,
+    )
+
     bronze = BashOperator(
         task_id="bronze",
         bash_command=f"{SPARK_SUBMIT} --layer bronze",
@@ -48,4 +72,9 @@ with DAG(
         bash_command=DBT_RUN,
     )
 
-    bronze >> refresh_bronze >> dbt
+    dbt_test = BashOperator(
+        task_id="dbt_test",
+        bash_command=DBT_TEST,
+    )
+
+    init >> bronze >> refresh_bronze >> dbt >> dbt_test

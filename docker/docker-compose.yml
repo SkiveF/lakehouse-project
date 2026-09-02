@@ -1,5 +1,25 @@
 services:
 
+  # ── PostgreSQL ── metastore Hive persistant, embarque dans la stack
+  # Le port hote est 5433 pour ne pas entrer en conflit avec un PostgreSQL local.
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: ${METASTORE_DB:-hive_metastore}
+      POSTGRES_USER: ${METASTORE_USER}
+      POSTGRES_PASSWORD: ${METASTORE_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   minio:
     image: minio/minio
     container_name: minio
@@ -12,11 +32,53 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── minio-init ── cree les buckets des trois couches puis s'arrete.
+  # Sans cela, la creation des buckets restait une etape manuelle non documentee
+  # (S3A ne sait pas creer un bucket, il echoue si le bucket n'existe pas).
+  minio-init:
+    image: minio/mc
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        for bucket in bronze silver gold warehouse; do
+          mc mb --ignore-existing local/$$bucket
+        done
+        echo "Buckets prets : bronze, silver, gold, warehouse"
+    restart: "no"
 
   spark:
     image: apache/spark:3.5.0
     container_name: spark
     user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      SPARK_S3A_ACCESS_KEY: ${SPARK_S3A_ACCESS_KEY}
+      SPARK_S3A_SECRET_KEY: ${SPARK_S3A_SECRET_KEY}
+      METASTORE_JDBC_URL: ${METASTORE_JDBC_URL}
+      METASTORE_USER: ${METASTORE_USER}
+      METASTORE_PASSWORD: ${METASTORE_PASSWORD}
     entrypoint: /bin/bash
     command:
       - -c
@@ -35,20 +97,36 @@ services:
           curl -sL -o $$JAR_DIR/postgresql.jar \
             https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
         fi
+        mkdir -p /opt/spark/conf
+        sed -e "s|@@METASTORE_JDBC_URL@@|$$METASTORE_JDBC_URL|" \
+            -e "s|@@METASTORE_USER@@|$$METASTORE_USER|" \
+            -e "s|@@METASTORE_PASSWORD@@|$$METASTORE_PASSWORD|" \
+            /opt/spark/conf/hive-site.xml.template > /opt/spark/conf/hive-site.xml
         exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "8080:8080"
       - "7077:7077"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     volumes:
       - ../:/opt/project
-      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/hive-site.xml.template:/opt/spark/conf/hive-site.xml.template:ro
 
   spark-worker:
     image: apache/spark:3.5.0
     container_name: spark-worker
     user: root
     depends_on:
-      - spark
+      spark:
+        condition: service_healthy
+    environment:
+      METASTORE_JDBC_URL: ${METASTORE_JDBC_URL}
+      METASTORE_USER: ${METASTORE_USER}
+      METASTORE_PASSWORD: ${METASTORE_PASSWORD}
     entrypoint: /bin/bash
     command:
       - -c
@@ -65,10 +143,21 @@ services:
           curl -sL -o $$JAR_DIR/postgresql.jar \
             https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
         fi
+        mkdir -p /opt/spark/conf
+        sed -e "s|@@METASTORE_JDBC_URL@@|$$METASTORE_JDBC_URL|" \
+            -e "s|@@METASTORE_USER@@|$$METASTORE_USER|" \
+            -e "s|@@METASTORE_PASSWORD@@|$$METASTORE_PASSWORD|" \
+            /opt/spark/conf/hive-site.xml.template > /opt/spark/conf/hive-site.xml
         exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark:7077
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     volumes:
       - ../:/opt/project
-      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/hive-site.xml.template:/opt/spark/conf/hive-site.xml.template:ro
 
   # ── Airflow ── orchestrateur du pipeline Bronze → dbt
   airflow:
@@ -76,7 +165,10 @@ services:
     container_name: airflow
     user: root
     depends_on:
-      - spark
+      spark:
+        condition: service_healthy
+      dbt:
+        condition: service_healthy
     ports:
       - "8081:8080"
     environment:
@@ -92,7 +184,16 @@ services:
           --role Admin --email admin@example.com --password ${AIRFLOW_ADMIN_PASSWORD} 2>/dev/null || true
         airflow scheduler &
         exec airflow webserver --port 8080
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 90s
     volumes:
+      # Volume nomme : la base de metadonnees (runs, connexions, utilisateurs)
+      # survit desormais a un docker compose down / --force-recreate.
+      - airflow_data:/opt/airflow
       - ../dags:/opt/airflow/dags
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -103,7 +204,18 @@ services:
     container_name: spark-thrift
     user: root
     depends_on:
-      - spark
+      spark:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      METASTORE_JDBC_URL: ${METASTORE_JDBC_URL}
+      METASTORE_USER: ${METASTORE_USER}
+      METASTORE_PASSWORD: ${METASTORE_PASSWORD}
     entrypoint: /bin/bash
     command:
       - -c
@@ -120,8 +232,15 @@ services:
           curl -sL -o $$JAR_DIR/postgresql.jar \
             https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
         fi
+        mkdir -p /opt/spark/conf
+        sed -e "s|@@METASTORE_JDBC_URL@@|$$METASTORE_JDBC_URL|" \
+            -e "s|@@METASTORE_USER@@|$$METASTORE_USER|" \
+            -e "s|@@METASTORE_PASSWORD@@|$$METASTORE_PASSWORD|" \
+            /opt/spark/conf/hive-site.xml.template > /opt/spark/conf/hive-site.xml
         /opt/spark/sbin/start-thriftserver.sh \
           --master spark://spark:7077 \
+          --total-executor-cores ${THRIFT_TOTAL_CORES:-4} \
+          --executor-memory ${THRIFT_EXECUTOR_MEMORY:-1g} \
           --hiveconf hive.server2.thrift.port=10000 \
           --hiveconf hive.server2.thrift.bind.host=0.0.0.0 \
           --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
@@ -130,14 +249,20 @@ services:
           --conf spark.hadoop.fs.s3a.path.style.access=true \
           --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
           --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
-          --conf spark.sql.legacy.allowNonEmptyLocationInCTAS=true
-        echo "✅ Spark Thrift Server démarré (metastore → PostgreSQL)"
-        tail -f /opt/spark/logs/*
+           --conf spark.sql.legacy.allowNonEmptyLocationInCTAS=true
+         echo "Spark Thrift Server started (metastore to PostgreSQL)"
+         tail -f /opt/spark/logs/*
     ports:
       - "10000:10000"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/10000'"]
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 90s
     volumes:
       - ../:/opt/project
-      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./hive-conf/hive-site.xml.template:/opt/spark/conf/hive-site.xml.template:ro
       - ./hive-conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
 
   # ── dbt ── Silver + Gold via dbt run
@@ -145,7 +270,8 @@ services:
     image: python:3.11-slim
     container_name: dbt
     depends_on:
-      - spark-thrift
+      spark-thrift:
+        condition: service_healthy
     working_dir: /opt/project/lakehouse_dbt
     environment:
       - DBT_PROFILES_DIR=/opt/project/lakehouse_dbt
@@ -156,16 +282,25 @@ services:
       - bash
       - -c
       - |
-        pip install --quiet dbt-core "dbt-spark[PyHive]"
-        echo "✅ dbt prêt — container actif."
+        # Versions epinglees : un pip install sans version fait dependre
+        # la stack de la derniere release publiee au moment du build.
+        pip install --quiet dbt-core==1.11.8 "dbt-spark[PyHive]==1.10.1"
+        echo "dbt ready - container active"
         tail -f /dev/null
+    healthcheck:
+      test: ["CMD-SHELL", "dbt --version > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
   # ── Apache Zeppelin ── notebook SQL interactif
   zeppelin:
     image: apache/zeppelin:0.11.1
     container_name: zeppelin
     depends_on:
-      - spark-thrift
+      spark-thrift:
+        condition: service_healthy
     ports:
       - "8085:8080"
     environment:
@@ -175,7 +310,53 @@ services:
       - zeppelin_notebooks:/zeppelin/notebook
       - zeppelin_logs:/zeppelin/logs
 
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9094:9094"
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka_data:/apache/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8086:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+
+
 volumes:
+  postgres_data:
+  airflow_data:
   minio_data:
+  kafka_data:
   zeppelin_notebooks:
   zeppelin_logs:

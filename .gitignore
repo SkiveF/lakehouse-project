@@ -12,6 +12,7 @@ venv/
 
 # IDE
 .idea/
+.vscode/
 
 # Spark
 spark-warehouse/
@@ -21,9 +22,14 @@ derby.log
 # Docker volumes
 minio_data/
 
-# Secrets
+# Secrets (NEVER commit .env files with real passwords!)
 docker/.env
 .env
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!SECURITY_ENV_VARS.md
 
 # OS
 .DS_Store
@@ -39,8 +45,18 @@ stubs/
 # Work dir
 work-dir/
 
-# Generated data
+# Donnees generees : recreees par data/generate_data.py et
+# streaming/generate_orders.py, qui sont eux versionnes.
 data/sources_files/*.csv
-data/generate_data.py
-data/count.py
+streaming/orders.jsonl
 
+# Logs et artefacts dbt
+logs/
+lakehouse_dbt/target/
+lakehouse_dbt/dbt_packages/
+lakehouse_dbt/.user.yml
+
+# Sauvegardes et scratch
+*.bak
+*.bak[0-9]
+_to_delete/

@@ -1,0 +1,5 @@
+# Environnement de developpement : batch + streaming + tests.
+-r requirements.txt
+-r streaming/requirements.txt
+
+pytest==8.3.4

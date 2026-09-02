@@ -1,0 +1,5 @@
+# Dependances d'execution du pipeline batch.
+# pyspark est epingle sur la version des images Docker (apache/spark:3.5.0)
+# pour que l'execution locale et l'execution en container se comportent pareil.
+pyspark==3.5.0
+PyYAML==6.0.2

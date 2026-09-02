@@ -4,9 +4,9 @@ lakehouse_dbt:
     dev:
       type: spark
       method: thrift
-      host: spark-thrift
-      port: 10000
-      user: root
+      host: "{{ env_var('DBT_SPARK_HOST', 'spark-thrift') }}"
+      port: "{{ env_var('DBT_SPARK_PORT', '10000') | as_number }}"
+      user: "{{ env_var('DBT_SPARK_USER', 'root') }}"
       schema: default
       threads: 2
       connect_timeout: 60

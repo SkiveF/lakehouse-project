@@ -1,5 +1,5 @@
 -- gold/customer_orders_summary.sql
--- Équivalent de silver_to_gold.py::customer_orders_summary()
+-- Customer-level order metrics built from Silver models.
 
 with customers as (
     select * from {{ ref('stg_customers') }}
