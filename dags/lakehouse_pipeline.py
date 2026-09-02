@@ -23,6 +23,14 @@ DBT_RUN = (
     "--project-dir /opt/project/lakehouse_dbt"
 )
 
+# Les tests dbt (not_null / unique sur les cles Silver et Gold) doivent tourner
+# dans le pipeline : sinon ils n'existent que sur le disque.
+DBT_TEST = (
+    "docker exec dbt dbt test "
+    "--profiles-dir /opt/project/lakehouse_dbt "
+    "--project-dir /opt/project/lakehouse_dbt"
+)
+
 # Build JDBC connection string from environment variables
 REFRESH_BRONZE = (
     f"docker exec spark-thrift /opt/spark/bin/beeline "
@@ -64,4 +72,9 @@ with DAG(
         bash_command=DBT_RUN,
     )
 
-    init >> bronze >> refresh_bronze >> dbt
+    dbt_test = BashOperator(
+        task_id="dbt_test",
+        bash_command=DBT_TEST,
+    )
+
+    init >> bronze >> refresh_bronze >> dbt >> dbt_test

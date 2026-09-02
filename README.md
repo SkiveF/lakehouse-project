@@ -42,11 +42,10 @@ CSV sources -> Bronze raw -> Silver dbt clean -> Gold dbt aggregates
 lakehouse-project/
 |-- main.py                         # Point d'entree Spark pour l'ingestion Bronze
 |-- config/
-|   `-- settings.yaml               # Sources CSV de la couche Bronze
+|   `-- settings.yaml               # Sources Bronze + schemas explicites
 |-- spark/
-|   |-- config.py                   # Chargement YAML
-|   |-- io.py                       # Helpers Parquet
-|   `-- utils.py                    # SparkSession + configuration S3A
+|   |-- config.py                   # Chargement + validation YAML
+|   `-- utils.py                    # SparkSession partagee, config S3A, purge stockage
 |-- ingestion/
 |   `-- base_ingestion.py           # CSV -> Bronze Parquet + table Hive
 |-- lakehouse_dbt/
@@ -57,7 +56,7 @@ lakehouse-project/
 |       |-- silver/                 # Modeles Silver
 |       `-- gold/                   # Modeles Gold
 |-- dags/
-|   `-- lakehouse_pipeline.py       # DAG Airflow Bronze -> refresh -> dbt
+|   `-- lakehouse_pipeline.py       # DAG init -> bronze -> refresh -> dbt run -> dbt test
 |-- data/
 |   `-- sources_files/              # CSV sources
 |-- docker/
@@ -68,19 +67,35 @@ lakehouse-project/
 
 ### 0. Preparer les variables d'environnement
 
+C'est `docker/.env` qui est lu par Docker Compose :
+
 ```powershell
-Set-Location "C:\SF_DEV_EXP\lakehouse-project"
+Set-Location "C:\SF_DEV_EXP\lakehouse-project\docker"
 Copy-Item ".env.example" ".env"
 ```
 
-Puis editer `.env` avec les credentials souhaites pour MinIO, Spark S3A et Airflow.
+Puis editer `docker/.env` : credentials MinIO et Spark S3A, mot de passe Airflow,
+credentials du metastore (`METASTORE_*`) et ressources allouees au Thrift Server
+(`THRIFT_TOTAL_CORES`, a garder strictement inferieur au nombre de coeurs de la
+machine pour que les `spark-submit` aient de quoi tourner).
+
+Aucun prerequis externe : le metastore Hive tourne dans un service `postgres` de
+la stack et les buckets MinIO sont crees automatiquement par `minio-init`. Pour
+repointer le metastore vers un PostgreSQL de l'hote, il suffit de changer
+`METASTORE_JDBC_URL`.
 
 ### 1. Demarrer l'infrastructure
 
 ```bash
 cd docker
 docker compose up -d
+docker compose ps
 ```
+
+Les services declarent des healthchecks et s'attendent les uns les autres
+(`postgres` et `minio` avant Spark, `spark-thrift` avant dbt), donc `up -d` rend
+la main quand la stack est reellement prete. Le premier demarrage prend quelques
+minutes : Spark telecharge ses JARs S3A et le driver PostgreSQL.
 
 ### 2. Generer les donnees de test
 
@@ -92,6 +107,22 @@ python data/generate_data.py
 
 ```bash
 docker exec spark /opt/spark/bin/spark-submit /opt/project/main.py --layer bronze
+```
+
+Bronze est **append-only et partitionne par `ingestion_date`** : chaque execution
+ajoute une partition au lieu d'ecraser la precedente, et chaque ligne porte sa
+provenance (`ingested_at`, `source_file`). La deduplication metier est faite en
+Silver. Les schemas des sources sont declares dans `config/settings.yaml` : aucune
+inference, et l'ingestion refuse d'ecrire si le schema declare ne correspond plus
+a la table enregistree.
+
+Options utiles :
+
+```bash
+# rejouer une ingestion sur une partition donnee
+... /opt/project/main.py --layer bronze --ingestion-date 2026-09-01
+# n'ingerer qu'une source
+... /opt/project/main.py --layer bronze --only orders
 ```
 
 ### 4. Transformations Silver et Gold
@@ -113,6 +144,7 @@ Le DAG execute les etapes suivantes dans cet ordre :
 2. `bronze`
 3. `refresh_bronze`
 4. `dbt_run`
+5. `dbt_test`
 
 ### 6. Pipeline complet en manuel
 
@@ -125,8 +157,19 @@ docker exec spark /opt/spark/bin/spark-submit /opt/project/init_tables.py
 docker exec spark /opt/spark/bin/spark-submit /opt/project/main.py --layer bronze
 docker exec spark-thrift /opt/spark/bin/beeline -u "jdbc:hive2://spark-thrift:10000" --silent=true -e "REFRESH TABLE bronze.customers; REFRESH TABLE bronze.orders;"
 docker exec dbt dbt run --profiles-dir /opt/project/lakehouse_dbt --project-dir /opt/project/lakehouse_dbt
+docker exec dbt dbt test --profiles-dir /opt/project/lakehouse_dbt --project-dir /opt/project/lakehouse_dbt
 docker exec spark /opt/spark/bin/spark-submit /opt/project/validate_tables.py
 ```
+
+### 7. Remettre le lakehouse a zero
+
+```bash
+docker exec spark /opt/spark/bin/spark-submit /opt/project/clean_tables.py --yes
+```
+
+Le script supprime les bases Hive **et** les donnees dans MinIO (les tables des
+trois couches sont externes : les retirer du metastore ne suffit pas). Ajouter
+`--metastore-only` pour ne vider que le metastore en conservant les fichiers.
 
 ## Commandes dbt utiles
 

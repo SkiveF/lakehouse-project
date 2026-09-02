@@ -1,7 +1,53 @@
+# Configuration de la couche Bronze.
+#
+# Chaque source declare SON SCHEMA EXPLICITEMENT : pas d'inferSchema, donc pas
+# de derive silencieuse entre deux ingestions. Si le CSV change de forme, il
+# faut modifier ce fichier -- et l'ingestion refusera d'ecrire dans une table
+# dont le schema enregistre ne correspond plus (voir ingestion/base_ingestion).
+#
+# Types acceptes : n'importe quel type DDL Spark (int, bigint, double,
+# decimal(10,2), string, date, timestamp, boolean...).
+
 bronze:
+  root: s3a://bronze
+
   sources:
     customers:
       path: /opt/project/data/sources_files/customers.csv
+      format: csv
+      options:
+        header: "true"
+        timestampFormat: "yyyy-MM-dd HH:mm:ss"
+      schema:
+        - name: customer_id
+          type: int
+        - name: name
+          type: string
+        - name: email
+          type: string
+        - name: city
+          type: string
+        - name: updated_at
+          type: timestamp
 
     orders:
       path: /opt/project/data/sources_files/orders.csv
+      format: csv
+      options:
+        header: "true"
+        timestampFormat: "yyyy-MM-dd HH:mm:ss"
+      schema:
+        - name: order_id
+          type: int
+        - name: customer_id
+          type: int
+        - name: product_id
+          type: int
+        - name: timestamp
+          type: timestamp
+        - name: amount
+          type: double
+        - name: status
+          type: string
+        - name: updated_at
+          type: timestamp

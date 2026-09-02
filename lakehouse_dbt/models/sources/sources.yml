@@ -2,10 +2,27 @@ version: 2
 
 sources:
   - name: bronze
-    description: "Données brutes ingérées depuis les CSV (couche Bronze / MinIO)"
+    description: >
+      Donnees brutes ingerees depuis les CSV (couche Bronze / MinIO).
+      Append-only et partitionnee par `ingestion_date` : chaque execution ajoute
+      une partition au lieu d'ecraser la precedente. La deduplication metier est
+      faite en Silver.
     tables:
       - name: customers
-        description: "Table clients brute — chemin s3a://bronze/customers/"
+        description: "Clients bruts, historises — s3a://bronze/customers/ingestion_date=*"
+        columns:
+          - name: ingested_at
+            description: "Horodatage UTC du lot d'ingestion"
+          - name: source_file
+            description: "Fichier source d'origine de la ligne"
+          - name: ingestion_date
+            description: "Cle de partition (date du lot)"
       - name: orders
-        description: "Table commandes brute — chemin s3a://bronze/orders/"
-
+        description: "Commandes brutes, historisees — s3a://bronze/orders/ingestion_date=*"
+        columns:
+          - name: ingested_at
+            description: "Horodatage UTC du lot d'ingestion"
+          - name: source_file
+            description: "Fichier source d'origine de la ligne"
+          - name: ingestion_date
+            description: "Cle de partition (date du lot)"
